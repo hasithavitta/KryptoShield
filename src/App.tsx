@@ -52,65 +52,81 @@ function AdminDashboard() {
   const [stats, setStats] = useState({ totalUsers: 0, totalAssets: 0, totalTxs: 0 });
 
   const fetchRegistryAndStats = async () => {
-    if (!publicClient) return;
-    try {
-      const grantLogs = await publicClient.getContractEvents({
-        address: CONTRACT_ADDRESS,
-        abi: CONTRACT_ABI,
-        eventName: 'RoleGranted',
-        fromBlock: 'earliest'
-      });
-      const revokeLogs = await publicClient.getContractEvents({
-        address: CONTRACT_ADDRESS,
-        abi: CONTRACT_ABI,
-        eventName: 'RoleRevoked',
-        fromBlock: 'earliest'
-      });
-      const mintLogs = await publicClient.getContractEvents({
-        address: CONTRACT_ADDRESS,
-        abi: CONTRACT_ABI,
-        eventName: 'AssetMinted',
-        fromBlock: 'earliest'
-      });
+    const storedRegistry = JSON.parse(localStorage.getItem('krypto_user_registry') || '[]');
+    const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
 
-      // Build active role map
-      const rolesMap = new Map<string, { role: string; roleName: string; blockNumber: bigint; txHash: string }>();
-      grantLogs.forEach(log => {
-        const acc = log.args.account?.toLowerCase();
-        const r = log.args.role;
-        if (acc && r) {
-          const roleName = r === ROLES.ADMIN ? 'Admin' : r === ROLES.MANAGER ? 'Manager' : r === ROLES.AUDITOR ? 'Auditor' : 'User';
-          rolesMap.set(`${acc}-${r}`, {
-            role: r,
-            roleName,
-            blockNumber: log.blockNumber || 0n,
-            txHash: log.transactionHash || ''
-          });
-        }
-      });
+    let onChainRegistry: any[] = [];
+    let mintLogsCount = 0;
+    let txCount = 0;
 
-      revokeLogs.forEach(log => {
-        const acc = log.args.account?.toLowerCase();
-        const r = log.args.role;
-        if (acc && r) {
-          rolesMap.delete(`${acc}-${r}`);
-        }
-      });
+    if (publicClient) {
+      try {
+        const grantLogs = await publicClient.getContractEvents({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          eventName: 'RoleGranted',
+          fromBlock: 'earliest'
+        });
+        const revokeLogs = await publicClient.getContractEvents({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          eventName: 'RoleRevoked',
+          fromBlock: 'earliest'
+        });
+        const mintLogs = await publicClient.getContractEvents({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          eventName: 'AssetMinted',
+          fromBlock: 'earliest'
+        });
 
-      const registry = Array.from(rolesMap.entries()).map(([key, val]) => ({
-        address: key.split('-')[0],
-        ...val
-      }));
+        // Build active role map
+        const rolesMap = new Map<string, { address: string; role: string; roleName: string; blockNumber: bigint; txHash: string }>();
+        grantLogs.forEach(log => {
+          const acc = log.args.account?.toLowerCase();
+          const r = log.args.role;
+          if (acc && r) {
+            const roleName = r === ROLES.ADMIN ? 'Admin' : r === ROLES.MANAGER ? 'Manager' : r === ROLES.AUDITOR ? 'Auditor' : 'User';
+            rolesMap.set(`${acc}-${r}`, {
+              address: acc,
+              role: r,
+              roleName,
+              blockNumber: log.blockNumber || 0n,
+              txHash: log.transactionHash || ''
+            });
+          }
+        });
 
-      setUserRegistry(registry);
-      setStats({
-        totalUsers: registry.length,
-        totalAssets: mintLogs.length,
-        totalTxs: grantLogs.length + revokeLogs.length + mintLogs.length
-      });
-    } catch (e) {
-      console.error('Error fetching admin stats:', e);
+        revokeLogs.forEach(log => {
+          const acc = log.args.account?.toLowerCase();
+          const r = log.args.role;
+          if (acc && r) {
+            rolesMap.delete(`${acc}-${r}`);
+          }
+        });
+
+        onChainRegistry = Array.from(rolesMap.values());
+        mintLogsCount = mintLogs.length;
+        txCount = grantLogs.length + revokeLogs.length + mintLogs.length;
+      } catch (e) {
+        console.error('Error fetching admin stats:', e);
+      }
     }
+
+    // Merge on-chain registry with stored registry
+    const combinedRegistry = [...onChainRegistry];
+    storedRegistry.forEach((localItem: any) => {
+      if (!combinedRegistry.some(r => r.address.toLowerCase() === localItem.address.toLowerCase() && r.role === localItem.role)) {
+        combinedRegistry.push(localItem);
+      }
+    });
+
+    setUserRegistry(combinedRegistry);
+    setStats({
+      totalUsers: combinedRegistry.length,
+      totalAssets: Math.max(mintLogsCount, storedAssets.length),
+      totalTxs: txCount + combinedRegistry.length + storedAssets.length
+    });
   };
 
   useEffect(() => {
@@ -124,19 +140,21 @@ function AdminDashboard() {
     e.preventDefault();
     if (!address || !address.startsWith('0x')) return;
 
-    // Optimistically update registry for immediate UI feedback & local testing
     const roleName = role === ROLES.ADMIN ? 'Admin' : role === ROLES.MANAGER ? 'Manager' : 'Auditor';
     const formattedAddress = address.toLowerCase();
     const newEntry = {
       address: formattedAddress,
       role: role,
       roleName: roleName,
-      blockNumber: 0n,
+      blockNumber: '0',
       txHash: '0x' + Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('')
     };
 
-    setUserRegistry(prev => [newEntry, ...prev.filter(u => !(u.address === formattedAddress && u.role === role))]);
-    setStats(prev => ({ ...prev, totalUsers: prev.totalUsers + 1, totalTxs: prev.totalTxs + 1 }));
+    const storedRegistry = JSON.parse(localStorage.getItem('krypto_user_registry') || '[]');
+    const updated = [newEntry, ...storedRegistry.filter((u: any) => !(u.address === formattedAddress && u.role === role))];
+    localStorage.setItem('krypto_user_registry', JSON.stringify(updated));
+    setUserRegistry(updated);
+    setStats(prev => ({ ...prev, totalUsers: updated.length, totalTxs: prev.totalTxs + 1 }));
 
     try {
       if (chainId !== sepolia.id && switchChainAsync) {
@@ -156,6 +174,9 @@ function AdminDashboard() {
   const handleRevoke = async (accountAddr: string, roleHash: string) => {
     if (!confirm(`Are you sure you want to revoke this role for ${accountAddr}?`)) return;
 
+    const storedRegistry = JSON.parse(localStorage.getItem('krypto_user_registry') || '[]');
+    const updated = storedRegistry.filter((u: any) => !(u.address.toLowerCase() === accountAddr.toLowerCase() && u.role === roleHash));
+    localStorage.setItem('krypto_user_registry', JSON.stringify(updated));
     setUserRegistry(prev => prev.filter(u => !(u.address.toLowerCase() === accountAddr.toLowerCase() && u.role === roleHash)));
 
     try {
@@ -299,24 +320,37 @@ function ManagerDashboard() {
   const [inventory, setInventory] = useState<any[]>([]);
 
   const fetchInventory = async () => {
-    if (!publicClient) return;
-    try {
-      const logs = await publicClient.getContractEvents({
-        address: CONTRACT_ADDRESS,
-        abi: CONTRACT_ABI,
-        eventName: 'AssetMinted',
-        fromBlock: 'earliest'
-      });
-      setInventory(logs.map(l => ({
-        tokenId: l.args.tokenId?.toString(),
-        recipient: l.args.recipient,
-        cid: l.args.tokenURI?.replace('ipfs://', ''),
-        blockNumber: l.blockNumber?.toString(),
-        txHash: l.transactionHash
-      })).reverse());
-    } catch (e) {
-      console.error('Error fetching inventory:', e);
+    const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
+    let onChainInventory: any[] = [];
+
+    if (publicClient) {
+      try {
+        const logs = await publicClient.getContractEvents({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          eventName: 'AssetMinted',
+          fromBlock: 'earliest'
+        });
+        onChainInventory = logs.map(l => ({
+          tokenId: l.args.tokenId?.toString(),
+          recipient: l.args.recipient,
+          cid: l.args.tokenURI?.replace('ipfs://', ''),
+          blockNumber: l.blockNumber?.toString(),
+          txHash: l.transactionHash
+        })).reverse();
+      } catch (e) {
+        console.error('Error fetching inventory:', e);
+      }
     }
+
+    const combined = [...onChainInventory];
+    storedAssets.forEach((localItem: any) => {
+      if (!combined.some(a => a.cid === localItem.cid)) {
+        combined.push(localItem);
+      }
+    });
+
+    setInventory(combined);
   };
 
   useEffect(() => {
@@ -354,6 +388,19 @@ function ManagerDashboard() {
       }
 
       setCid(generatedCid);
+
+      const newAsset = {
+        tokenId: String(inventory.length + 1),
+        recipient: recipient.toLowerCase(),
+        cid: generatedCid,
+        blockNumber: 'Latest',
+        txHash: '0x' + Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('')
+      };
+
+      const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
+      const updatedAssets = [newAsset, ...storedAssets];
+      localStorage.setItem('krypto_asset_inventory', JSON.stringify(updatedAssets));
+      setInventory(updatedAssets);
 
       // Step 3: Trigger blockchain mint
       setStep(3);
@@ -483,30 +530,42 @@ function UserDashboard() {
 
   useEffect(() => {
     async function fetchAssets() {
-      if (!publicClient || !address) return;
-      try {
-        const logs = await publicClient.getContractEvents({
-          address: CONTRACT_ADDRESS,
-          abi: CONTRACT_ABI,
-          eventName: 'AssetMinted',
-          args: { recipient: address as `0x${string}` },
-          fromBlock: 'earliest'
-        });
-        
-        const list = logs.map(log => ({
-          tokenId: log.args.tokenId?.toString(),
-          cid: log.args.tokenURI?.replace('ipfs://', ''),
-          fullURI: log.args.tokenURI,
-          blockNumber: log.blockNumber?.toString(),
-          txHash: log.transactionHash,
-          recipient: log.args.recipient
-        }));
+      if (!address) return;
+      const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
+      const userStored = storedAssets.filter((a: any) => a.recipient?.toLowerCase() === address.toLowerCase());
 
-        setAssets(list);
-        if (list.length > 0) setSelectedProof(list[0]);
-      } catch (e) {
-        console.error('Error fetching user assets:', e);
+      let onChainList: any[] = [];
+      if (publicClient) {
+        try {
+          const logs = await publicClient.getContractEvents({
+            address: CONTRACT_ADDRESS,
+            abi: CONTRACT_ABI,
+            eventName: 'AssetMinted',
+            args: { recipient: address as `0x${string}` },
+            fromBlock: 'earliest'
+          });
+          onChainList = logs.map(log => ({
+            tokenId: log.args.tokenId?.toString(),
+            cid: log.args.tokenURI?.replace('ipfs://', ''),
+            fullURI: log.args.tokenURI,
+            blockNumber: log.blockNumber?.toString(),
+            txHash: log.transactionHash,
+            recipient: log.args.recipient
+          }));
+        } catch (e) {
+          console.error('Error fetching user assets:', e);
+        }
       }
+
+      const combined = [...onChainList];
+      userStored.forEach((localItem: any) => {
+        if (!combined.some(a => a.cid === localItem.cid)) {
+          combined.push(localItem);
+        }
+      });
+
+      setAssets(combined);
+      if (combined.length > 0) setSelectedProof(combined[0]);
     }
     fetchAssets();
   }, [address, publicClient]);
