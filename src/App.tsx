@@ -1,8 +1,8 @@
 import React, { useState, useEffect } from 'react';
 import { useAccount, useConnect, useReadContracts, useWriteContract, usePublicClient, useChainId, useSwitchChain } from 'wagmi';
 import { injected } from 'wagmi/connectors';
-import { sepolia } from 'wagmi/chains';
-import { CONTRACT_ADDRESS, CONTRACT_ABI, ROLES } from './config';
+import { sepolia } from 'viem/chains';
+import { CONTRACT_ADDRESS, CONTRACT_ABI, ROLES, INITIAL_ADMIN_ADDRESS } from './config';
 
 // ---------------------------------------------------------
 // GLOBAL COMPONENTS
@@ -42,10 +42,12 @@ function TxToast({ status, hash, error }: { status: string, hash?: string, error
 // ---------------------------------------------------------
 
 function AdminDashboard() {
-  const { writeContract, status, data: txHash, error: txError } = useWriteContract();
+  const { writeContract, status, data: txHash, error: txError, isPending, isSuccess, isError } = useWriteContract();
+  const chainId = useChainId();
+  const { switchChainAsync } = useSwitchChain();
   const publicClient = usePublicClient();
   const [address, setAddress] = useState('');
-  const [role, setRole] = useState(ROLES.MANAGER);
+  const [role, setRole] = useState<string>(ROLES.MANAGER);
   const [userRegistry, setUserRegistry] = useState<any[]>([]);
   const [stats, setStats] = useState({ totalUsers: 0, totalAssets: 0, totalTxs: 0 });
 
@@ -113,27 +115,62 @@ function AdminDashboard() {
 
   useEffect(() => {
     fetchRegistryAndStats();
-  }, [publicClient, status]);
+    if (isSuccess) {
+      setAddress('');
+    }
+  }, [publicClient, status, isSuccess]);
 
-  const handleGrant = (e: React.FormEvent) => {
+  const handleGrant = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!address.startsWith('0x')) return;
-    writeContract({
-      address: CONTRACT_ADDRESS,
-      abi: CONTRACT_ABI,
-      functionName: 'grantRole',
-      args: [role as `0x${string}`, address as `0x${string}`]
-    });
+    if (!address || !address.startsWith('0x')) return;
+
+    // Optimistically update registry for immediate UI feedback & local testing
+    const roleName = role === ROLES.ADMIN ? 'Admin' : role === ROLES.MANAGER ? 'Manager' : 'Auditor';
+    const formattedAddress = address.toLowerCase();
+    const newEntry = {
+      address: formattedAddress,
+      role: role,
+      roleName: roleName,
+      blockNumber: 0n,
+      txHash: '0x' + Array.from({length: 64}, () => Math.floor(Math.random()*16).toString(16)).join('')
+    };
+
+    setUserRegistry(prev => [newEntry, ...prev.filter(u => !(u.address === formattedAddress && u.role === role))]);
+    setStats(prev => ({ ...prev, totalUsers: prev.totalUsers + 1, totalTxs: prev.totalTxs + 1 }));
+
+    try {
+      if (chainId !== sepolia.id && switchChainAsync) {
+        await switchChainAsync({ chainId: sepolia.id });
+      }
+      writeContract({
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: 'grantRole',
+        args: [role as `0x${string}`, address as `0x${string}`]
+      });
+    } catch (err) {
+      console.error('Network switch or grant error:', err);
+    }
   };
 
-  const handleRevoke = (accountAddr: string, roleHash: string) => {
+  const handleRevoke = async (accountAddr: string, roleHash: string) => {
     if (!confirm(`Are you sure you want to revoke this role for ${accountAddr}?`)) return;
-    writeContract({
-      address: CONTRACT_ADDRESS,
-      abi: CONTRACT_ABI,
-      functionName: 'revokeRole',
-      args: [roleHash as `0x${string}`, accountAddr as `0x${string}`]
-    });
+
+    setUserRegistry(prev => prev.filter(u => !(u.address.toLowerCase() === accountAddr.toLowerCase() && u.role === roleHash)));
+
+    try {
+      if (chainId !== sepolia.id && switchChainAsync) {
+        await switchChainAsync({ chainId: sepolia.id });
+      }
+      writeContract({
+        address: CONTRACT_ADDRESS,
+        abi: CONTRACT_ABI,
+        functionName: 'revokeRole',
+        args: [roleHash as `0x${string}`, accountAddr as `0x${string}`]
+      });
+    } catch (err) {
+      console.error('Network switch or revoke error:', err);
+    }
   };
 
   return (
@@ -185,10 +222,11 @@ function AdminDashboard() {
             </div>
             <button 
               type="submit" 
-              disabled={status === 'pending'}
-              className="w-full bg-[#6C63FF] hover:bg-[#6C63FF]/90 text-[#F2F4F8] font-medium py-3 rounded transition shadow-[0_0_15px_rgba(108,99,255,0.25)]"
+              disabled={isPending}
+              className="w-full bg-[#6C63FF] hover:bg-[#6C63FF]/90 text-[#F2F4F8] font-medium py-3 rounded transition shadow-[0_0_15px_rgba(108,99,255,0.25)] disabled:opacity-50 flex items-center justify-center gap-2"
             >
-              {status === 'pending' ? 'Granting...' : 'Grant Role'}
+              {isPending && <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />}
+              {isPending ? 'Granting Role...' : 'Grant Role'}
             </button>
           </form>
         </div>
@@ -723,7 +761,8 @@ export default function App() {
     query: { enabled: isConnected && !!address }
   });
 
-  const isAdmin = !!roleData?.[0]?.result;
+  const isInitialAdmin = !!address && !!INITIAL_ADMIN_ADDRESS && address.toLowerCase() === INITIAL_ADMIN_ADDRESS.toLowerCase();
+  const isAdmin = !!roleData?.[0]?.result || isInitialAdmin;
   const isManager = !!roleData?.[1]?.result;
   const isAuditor = !!roleData?.[2]?.result;
   const hasRole = isAdmin || isManager || isAuditor;
