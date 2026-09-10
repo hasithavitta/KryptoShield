@@ -534,46 +534,55 @@ function UserDashboard() {
   const [assets, setAssets] = useState<any[]>([]);
   const [selectedProof, setSelectedProof] = useState<any | null>(null);
 
-  useEffect(() => {
-    async function fetchAssets() {
-      if (!address) return;
-      const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
-      const userStored = storedAssets.filter((a: any) => a.recipient?.toLowerCase() === address.toLowerCase());
+  const fetchAssets = async () => {
+    if (!address) return;
+    const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
+    const userStored = storedAssets.filter((a: any) => a.recipient?.toLowerCase() === address.toLowerCase());
 
-      let onChainList: any[] = [];
-      if (publicClient) {
-        try {
-          const logs = await publicClient.getContractEvents({
-            address: CONTRACT_ADDRESS,
-            abi: CONTRACT_ABI,
-            eventName: 'AssetMinted',
-            args: { recipient: address as `0x${string}` },
-            fromBlock: 'earliest'
-          });
-          onChainList = logs.map(log => ({
-            tokenId: log.args.tokenId?.toString(),
-            cid: log.args.tokenURI?.replace('ipfs://', ''),
-            fullURI: log.args.tokenURI,
-            blockNumber: log.blockNumber?.toString(),
-            txHash: log.transactionHash,
-            recipient: log.args.recipient
-          }));
-        } catch (e) {
-          console.error('Error fetching user assets:', e);
-        }
+    let onChainList: any[] = [];
+    if (publicClient) {
+      try {
+        const logs = await publicClient.getContractEvents({
+          address: CONTRACT_ADDRESS,
+          abi: CONTRACT_ABI,
+          eventName: 'AssetMinted',
+          args: { recipient: address as `0x${string}` },
+          fromBlock: 'earliest'
+        });
+        onChainList = logs.map(log => ({
+          tokenId: log.args.tokenId?.toString(),
+          cid: log.args.tokenURI?.replace('ipfs://', ''),
+          fullURI: log.args.tokenURI,
+          blockNumber: log.blockNumber?.toString() || 'Latest',
+          txHash: log.transactionHash,
+          recipient: log.args.recipient
+        }));
+      } catch (e) {
+        console.error('Error fetching user assets:', e);
       }
-
-      const combined = [...onChainList];
-      userStored.forEach((localItem: any) => {
-        if (!combined.some(a => a.cid === localItem.cid)) {
-          combined.push(localItem);
-        }
-      });
-
-      setAssets(combined);
-      if (combined.length > 0) setSelectedProof(combined[0]);
     }
+
+    const combined = [...onChainList];
+    userStored.forEach((localItem: any) => {
+      if (!combined.some(a => a.cid === localItem.cid)) {
+        combined.push(localItem);
+      }
+    });
+
+    setAssets(combined);
+    if (combined.length > 0 && !selectedProof) {
+      setSelectedProof(combined[0]);
+    }
+  };
+
+  useEffect(() => {
     fetchAssets();
+    const interval = setInterval(fetchAssets, 1000);
+    window.addEventListener('storage', fetchAssets);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', fetchAssets);
+    };
   }, [address, publicClient]);
 
   return (
@@ -679,9 +688,12 @@ function AuditorDashboard() {
   const [timeline, setTimeline] = useState<any[]>([]);
   const [filter, setFilter] = useState<string>('ALL');
 
-  useEffect(() => {
-    async function fetchTimeline() {
-      if (!publicClient) return;
+  const fetchTimeline = async () => {
+    const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
+    const storedRoles = JSON.parse(localStorage.getItem('krypto_user_registry') || '[]');
+
+    let onChainLogs: any[] = [];
+    if (publicClient) {
       try {
         const [grantLogs, revokeLogs, mintLogs] = await Promise.all([
           publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleGranted', fromBlock: 'earliest' }),
@@ -689,7 +701,7 @@ function AuditorDashboard() {
           publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'AssetMinted', fromBlock: 'earliest' })
         ]);
 
-        const formatted = [
+        onChainLogs = [
           ...grantLogs.map(l => ({
             type: 'RoleGranted',
             role: l.args.role === ROLES.ADMIN ? 'Admin' : l.args.role === ROLES.MANAGER ? 'Manager' : 'Auditor',
@@ -714,14 +726,49 @@ function AuditorDashboard() {
             blockNumber: l.blockNumber,
             txHash: l.transactionHash
           }))
-        ].sort((a, b) => Number(b.blockNumber || 0n) - Number(a.blockNumber || 0n));
-
-        setTimeline(formatted);
+        ];
       } catch (e) {
         console.error('Error fetching auditor logs:', e);
       }
     }
+
+    const localLogs = [
+      ...storedRoles.map((r: any) => ({
+        type: 'RoleGranted',
+        role: r.roleName,
+        account: r.address,
+        sender: 'Admin',
+        blockNumber: 'Latest',
+        txHash: r.txHash
+      })),
+      ...storedAssets.map((a: any) => ({
+        type: 'AssetMinted',
+        tokenId: a.tokenId,
+        recipient: a.recipient,
+        cid: a.cid,
+        blockNumber: 'Latest',
+        txHash: a.txHash
+      }))
+    ];
+
+    const combined = [...onChainLogs];
+    localLogs.forEach((localItem: any) => {
+      if (!combined.some(l => l.txHash === localItem.txHash)) {
+        combined.push(localItem);
+      }
+    });
+
+    setTimeline(combined);
+  };
+
+  useEffect(() => {
     fetchTimeline();
+    const interval = setInterval(fetchTimeline, 1000);
+    window.addEventListener('storage', fetchTimeline);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', fetchTimeline);
+    };
   }, [publicClient]);
 
   const filteredLogs = timeline.filter(l => filter === 'ALL' || l.type === filter);
