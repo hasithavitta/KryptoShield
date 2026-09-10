@@ -134,6 +134,12 @@ function AdminDashboard() {
     if (isSuccess) {
       setAddress('');
     }
+    const interval = setInterval(fetchRegistryAndStats, 2000);
+    window.addEventListener('storage', fetchRegistryAndStats);
+    return () => {
+      clearInterval(interval);
+      window.removeEventListener('storage', fetchRegistryAndStats);
+    };
   }, [publicClient, status, isSuccess]);
 
   const handleGrant = async (e: React.FormEvent) => {
