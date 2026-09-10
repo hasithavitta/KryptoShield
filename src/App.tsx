@@ -65,19 +65,19 @@ function AdminDashboard() {
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
           eventName: 'RoleGranted',
-          fromBlock: 'earliest'
+          fromBlock: 11670000n
         });
         const revokeLogs = await publicClient.getContractEvents({
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
           eventName: 'RoleRevoked',
-          fromBlock: 'earliest'
+          fromBlock: 11670000n
         });
         const mintLogs = await publicClient.getContractEvents({
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
           eventName: 'AssetMinted',
-          fromBlock: 'earliest'
+          fromBlock: 11670000n
         });
 
         // Build active role map
@@ -335,7 +335,7 @@ function ManagerDashboard() {
           address: CONTRACT_ADDRESS,
           abi: CONTRACT_ABI,
           eventName: 'AssetMinted',
-          fromBlock: 'earliest'
+          fromBlock: 11670000n
         });
         onChainInventory = logs.map(l => ({
           tokenId: l.args.tokenId?.toString(),
@@ -547,7 +547,7 @@ function UserDashboard() {
           abi: CONTRACT_ABI,
           eventName: 'AssetMinted',
           args: { recipient: address as `0x${string}` },
-          fromBlock: 'earliest'
+          fromBlock: 11670000n
         });
         onChainList = logs.map(log => ({
           tokenId: log.args.tokenId?.toString(),
@@ -696,9 +696,9 @@ function AuditorDashboard() {
     if (publicClient) {
       try {
         const [grantLogs, revokeLogs, mintLogs] = await Promise.all([
-          publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleGranted', fromBlock: 'earliest' }),
-          publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleRevoked', fromBlock: 'earliest' }),
-          publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'AssetMinted', fromBlock: 'earliest' })
+          publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleGranted', fromBlock: 11670000n }),
+          publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleRevoked', fromBlock: 11670000n }),
+          publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'AssetMinted', fromBlock: 11670000n })
         ]);
 
         onChainLogs = [
