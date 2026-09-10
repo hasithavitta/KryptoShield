@@ -37,6 +37,50 @@ function TxToast({ status, hash, error }: { status: string, hash?: string, error
   );
 }
 
+// Helper to get combined assets from defaults, local storage, and on-chain logs
+function getCombinedAssets(onChainLogs: any[] = []) {
+  const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
+
+  const assetsMap = new Map<string, any>([
+    ['1', { tokenId: '1', recipient: '0x6883f159babfa2b4abfb9d8ba0a2dda2412d39bf', cid: 'bafybeig80e2f92kiiztzq7cwd', blockNumber: '11674100', txHash: '0x190cfc10j6761111111111111111111111111111111111111111111111111111' }],
+    ['2', { tokenId: '2', recipient: '0xb9b4a83d0b3fb8e3519d91f30b541dec230482e8', cid: 'bafybei4lqdtef1fb7gljbn336', blockNumber: '11674120', txHash: '0x190cfc10j6762222222222222222222222222222222222222222222222222222' }],
+    ['3', { tokenId: '3', recipient: '0xb9b4a83d0b3fb8e3519d91f30b541dec230482e8', cid: 'bafybeiffav1712ar9boqeu0r8', blockNumber: '11674165', txHash: '0x190cfc10j6763333333333333333333333333333333333333333333333333333' }]
+  ]);
+
+  storedAssets.forEach((localItem: any) => {
+    if (localItem.tokenId) {
+      assetsMap.set(String(localItem.tokenId), {
+        ...localItem,
+        recipient: localItem.recipient?.toLowerCase()
+      });
+    }
+  });
+
+  onChainLogs.forEach((log: any) => {
+    const id = log.tokenId || log.args?.tokenId?.toString();
+    if (id) {
+      const existing = assetsMap.get(id) || {};
+      const cid = log.cid || log.args?.tokenURI?.replace('ipfs://', '');
+      const recipient = (id === '1') 
+        ? '0x6883f159babfa2b4abfb9d8ba0a2dda2412d39bf'
+        : (id === '2' || id === '3')
+        ? '0xb9b4a83d0b3fb8e3519d91f30b541dec230482e8'
+        : (log.recipient || log.args?.recipient)?.toLowerCase() || existing.recipient;
+
+      assetsMap.set(id, {
+        ...existing,
+        tokenId: id,
+        recipient,
+        cid: cid || existing.cid,
+        blockNumber: log.blockNumber?.toString() || existing.blockNumber || 'Latest',
+        txHash: log.txHash || log.transactionHash || existing.txHash
+      });
+    }
+  });
+
+  return Array.from(assetsMap.values()).sort((a, b) => Number(b.tokenId) - Number(a.tokenId));
+}
+
 // ---------------------------------------------------------
 // ROLE DASHBOARDS
 // ---------------------------------------------------------
@@ -55,15 +99,17 @@ function AdminDashboard() {
     const storedRegistry = JSON.parse(localStorage.getItem('krypto_user_registry') || '[]');
 
     let onChainRegistry: any[] = [];
+    let mintLogs: any[] = [];
     let txCount = 0;
 
     if (publicClient) {
       try {
-        const [grantLogs, revokeLogs, mintLogs] = await Promise.all([
+        const [grantLogs, revokeLogs, mLogs] = await Promise.all([
           publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleGranted', fromBlock: 11670000n }),
           publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'RoleRevoked', fromBlock: 11670000n }),
           publicClient.getContractEvents({ address: CONTRACT_ADDRESS, abi: CONTRACT_ABI, eventName: 'AssetMinted', fromBlock: 11670000n })
         ]);
+        mintLogs = mLogs;
 
         const rolesMap = new Map<string, { address: string; role: string; roleName: string; blockNumber: bigint; txHash: string }>();
         grantLogs.forEach(log => {
@@ -83,25 +129,26 @@ function AdminDashboard() {
 
         onChainRegistry = Array.from(rolesMap.values());
         txCount = grantLogs.length + revokeLogs.length + mintLogs.length;
-
-        // Combine on-chain registry with stored registry
-        const combinedRegistry = [...onChainRegistry];
-        storedRegistry.forEach((localItem: any) => {
-          if (!combinedRegistry.some(r => r.address.toLowerCase() === localItem.address.toLowerCase() && r.role === localItem.role)) {
-            combinedRegistry.push(localItem);
-          }
-        });
-
-        setUserRegistry(combinedRegistry);
-        setStats({
-          totalUsers: Math.max(combinedRegistry.length, 3),
-          totalAssets: 3,
-          totalTxs: Math.max(txCount + combinedRegistry.length, 6)
-        });
       } catch (e) {
         console.error('Error fetching admin stats:', e);
       }
     }
+
+    const combinedRegistry = [...onChainRegistry];
+    storedRegistry.forEach((localItem: any) => {
+      if (!combinedRegistry.some(r => r.address.toLowerCase() === localItem.address.toLowerCase() && r.role === localItem.role)) {
+        combinedRegistry.push(localItem);
+      }
+    });
+
+    const allAssets = getCombinedAssets(mintLogs);
+
+    setUserRegistry(combinedRegistry);
+    setStats({
+      totalUsers: Math.max(combinedRegistry.length, 3),
+      totalAssets: allAssets.length,
+      totalTxs: Math.max(txCount + combinedRegistry.length, allAssets.length + 3)
+    });
   };
 
   useEffect(() => {
@@ -190,7 +237,7 @@ function AdminDashboard() {
         </div>
         <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-lg">
           <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider mb-2">Total Minted Assets</div>
-          <div className="text-3xl font-bold text-[#14E0B4]">3</div>
+          <div className="text-3xl font-bold text-[#14E0B4]">{stats.totalAssets}</div>
         </div>
         <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-lg">
           <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider mb-2">On-Chain Operations</div>
@@ -297,15 +344,11 @@ function ManagerDashboard() {
   const [recipient, setRecipient] = useState('');
   const [step, setStep] = useState<number>(0);
   const [cid, setCid] = useState<string>('');
-  const [inventory, setInventory] = useState<any[]>([
-    { tokenId: '3', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybeiffav1712ar9boqeu0r8', blockNumber: '11674165', txHash: '0x190cfc10j6763333333333333333333333333333333333333333333333333333' },
-    { tokenId: '2', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybei4lqdtef1fb7gljbn336', blockNumber: '11674120', txHash: '0x190cfc10j6762222222222222222222222222222222222222222222222222222' },
-    { tokenId: '1', recipient: '0x6883F159BabFA2b4AbFb9d8Ba0a2DdA2412d39bF'.toLowerCase(), cid: 'bafybeig80e2f92kiiztzq7cwd', blockNumber: '11674100', txHash: '0x190cfc10j6761111111111111111111111111111111111111111111111111111' }
-  ]);
+  const [inventory, setInventory] = useState<any[]>(() => getCombinedAssets());
 
   const fetchInventory = async () => {
     try {
-      let onChainInventory: any[] = [];
+      let onChainLogs: any[] = [];
       if (publicClient) {
         const logs = await publicClient.getContractEvents({
           address: CONTRACT_ADDRESS,
@@ -313,33 +356,16 @@ function ManagerDashboard() {
           eventName: 'AssetMinted',
           fromBlock: 11670000n
         });
-        onChainInventory = logs.map(l => ({
+        onChainLogs = logs.map(l => ({
           tokenId: l.args.tokenId?.toString(),
           recipient: l.args.recipient?.toLowerCase(),
           cid: l.args.tokenURI?.replace('ipfs://', ''),
           blockNumber: l.blockNumber?.toString() || 'Latest',
           txHash: l.transactionHash
-        })).reverse();
+        }));
       }
 
-      const defaultInventory = [
-        { tokenId: '3', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybeiffav1712ar9boqeu0r8', blockNumber: '11674165', txHash: '0x190cfc10j6763333333333333333333333333333333333333333333333333333' },
-        { tokenId: '2', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybei4lqdtef1fb7gljbn336', blockNumber: '11674120', txHash: '0x190cfc10j6762222222222222222222222222222222222222222222222222222' },
-        { tokenId: '1', recipient: '0x6883F159BabFA2b4AbFb9d8Ba0a2DdA2412d39bF'.toLowerCase(), cid: 'bafybeig80e2f92kiiztzq7cwd', blockNumber: '11674100', txHash: '0x190cfc10j6761111111111111111111111111111111111111111111111111111' }
-      ];
-
-      onChainInventory.forEach(item => {
-        const idx = defaultInventory.findIndex(d => d.tokenId === item.tokenId);
-        if (idx !== -1) {
-          defaultInventory[idx] = {
-            ...defaultInventory[idx],
-            ...item,
-            recipient: item.tokenId === '1' ? '0x6883F159BabFA2b4AbFb9d8Ba0a2DdA2412d39bF'.toLowerCase() : '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase()
-          };
-        }
-      });
-
-      setInventory(defaultInventory);
+      setInventory(getCombinedAssets(onChainLogs));
     } catch (e) {
       console.error('Error fetching inventory:', e);
     }
@@ -384,8 +410,9 @@ function ManagerDashboard() {
 
       setCid(generatedCid);
 
+      const nextTokenId = String(inventory.length + 1);
       const newAsset = {
-        tokenId: String(inventory.length + 1),
+        tokenId: nextTokenId,
         recipient: recipient.toLowerCase(),
         cid: generatedCid,
         blockNumber: 'Latest',
@@ -395,7 +422,8 @@ function ManagerDashboard() {
       const storedAssets = JSON.parse(localStorage.getItem('krypto_asset_inventory') || '[]');
       const updatedAssets = [newAsset, ...storedAssets];
       localStorage.setItem('krypto_asset_inventory', JSON.stringify(updatedAssets));
-      setInventory([newAsset, ...inventory]);
+
+      setInventory(getCombinedAssets());
 
       setStep(3);
       writeContract({
@@ -518,19 +546,17 @@ function ManagerDashboard() {
 function UserDashboard() {
   const { address } = useAccount();
   const publicClient = usePublicClient();
-  const [assets, setAssets] = useState<any[]>([
-    { tokenId: '2', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybei4lqdtef1fb7gljbn336', blockNumber: '11674120', txHash: '0x190cfc10j6762222222222222222222222222222222222222222222222222222' },
-    { tokenId: '3', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybeiffav1712ar9boqeu0r8', blockNumber: '11674165', txHash: '0x190cfc10j6763333333333333333333333333333333333333333333333333333' }
-  ]);
-  const [selectedProof, setSelectedProof] = useState<any | null>({
-    tokenId: '2', recipient: '0xb9b4a83d0b3fb8e3519D91f30B541dec230482e8'.toLowerCase(), cid: 'bafybei4lqdtef1fb7gljbn336', blockNumber: '11674120', txHash: '0x190cfc10j6762222222222222222222222222222222222222222222222222222'
+  const [assets, setAssets] = useState<any[]>(() => {
+    const all = getCombinedAssets();
+    return all.filter(a => address && a.recipient?.toLowerCase() === address.toLowerCase());
   });
+  const [selectedProof, setSelectedProof] = useState<any | null>(null);
 
   const fetchAssets = async () => {
     if (!address) return;
 
     try {
-      let onChainList: any[] = [];
+      let onChainLogs: any[] = [];
       if (publicClient) {
         const logs = await publicClient.getContractEvents({
           address: CONTRACT_ADDRESS,
@@ -538,7 +564,7 @@ function UserDashboard() {
           eventName: 'AssetMinted',
           fromBlock: 11670000n
         });
-        onChainList = logs.map(log => ({
+        onChainLogs = logs.map(log => ({
           tokenId: log.args.tokenId?.toString(),
           cid: log.args.tokenURI?.replace('ipfs://', ''),
           fullURI: log.args.tokenURI,
@@ -548,24 +574,7 @@ function UserDashboard() {
         }));
       }
 
-      const defaultAssetsMap = new Map<string, any>([
-        ['1', { tokenId: '1', recipient: '0x6883f159babfa2b4abfb9d8ba0a2dda2412d39bf', cid: 'bafybeig80e2f92kiiztzq7cwd', blockNumber: '11674100', txHash: '0x190cfc10j6761111111111111111111111111111111111111111111111111111' }],
-        ['2', { tokenId: '2', recipient: '0xb9b4a83d0b3fb8e3519d91f30b541dec230482e8', cid: 'bafybei4lqdtef1fb7gljbn336', blockNumber: '11674120', txHash: '0x190cfc10j6762222222222222222222222222222222222222222222222222222' }],
-        ['3', { tokenId: '3', recipient: '0xb9b4a83d0b3fb8e3519d91f30b541dec230482e8', cid: 'bafybeiffav1712ar9boqeu0r8', blockNumber: '11674165', txHash: '0x190cfc10j6763333333333333333333333333333333333333333333333333333' }]
-      ]);
-
-      onChainList.forEach(item => {
-        if (item.tokenId && ['1', '2', '3'].includes(item.tokenId)) {
-          const defaultItem = defaultAssetsMap.get(item.tokenId);
-          defaultAssetsMap.set(item.tokenId, {
-            ...defaultItem,
-            ...item,
-            recipient: item.tokenId === '1' ? '0x6883f159babfa2b4abfb9d8ba0a2dda2412d39bf' : '0xb9b4a83d0b3fb8e3519d91f30b541dec230482e8'
-          });
-        }
-      });
-
-      const allAssets = Array.from(defaultAssetsMap.values());
+      const allAssets = getCombinedAssets(onChainLogs);
       const userAssets = allAssets.filter(a => a.recipient?.toLowerCase() === address.toLowerCase());
 
       setAssets(userAssets);
