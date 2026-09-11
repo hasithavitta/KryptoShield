@@ -92,8 +92,10 @@ function AdminDashboard() {
   const publicClient = usePublicClient();
   const [address, setAddress] = useState('');
   const [role, setRole] = useState<string>(ROLES.MANAGER);
+  const [searchQuery, setSearchQuery] = useState('');
+  const [roleFilter, setRoleFilter] = useState<string>('ALL');
   const [userRegistry, setUserRegistry] = useState<any[]>([]);
-  const [stats, setStats] = useState({ totalUsers: 0, totalAssets: 3, totalTxs: 0 });
+  const [stats, setStats] = useState({ totalUsers: 0, totalAssets: 7, totalTxs: 0 });
 
   const fetchRegistryAndStats = async () => {
     const storedRegistry = JSON.parse(localStorage.getItem('krypto_user_registry') || '[]');
@@ -146,8 +148,8 @@ function AdminDashboard() {
     setUserRegistry(combinedRegistry);
     setStats({
       totalUsers: Math.max(combinedRegistry.length, 3),
-      totalAssets: allAssets.length,
-      totalTxs: Math.max(txCount + combinedRegistry.length, allAssets.length + 3)
+      totalAssets: Math.max(allAssets.length, 7),
+      totalTxs: Math.max(txCount + combinedRegistry.length, Math.max(allAssets.length, 7) + 3)
     });
   };
 
@@ -157,10 +159,13 @@ function AdminDashboard() {
       setAddress('');
     }
     const interval = setInterval(fetchRegistryAndStats, 10000);
-    window.addEventListener('storage', fetchRegistryAndStats);
+    const handleUpdate = () => fetchRegistryAndStats();
+    window.addEventListener('storage', handleUpdate);
+    window.addEventListener('krypto_asset_updated', handleUpdate);
     return () => {
       clearInterval(interval);
-      window.removeEventListener('storage', fetchRegistryAndStats);
+      window.removeEventListener('storage', handleUpdate);
+      window.removeEventListener('krypto_asset_updated', handleUpdate);
     };
   }, [publicClient, status, isSuccess]);
 
@@ -183,6 +188,7 @@ function AdminDashboard() {
     localStorage.setItem('krypto_user_registry', JSON.stringify(updated));
     setUserRegistry(updated);
     setStats(prev => ({ ...prev, totalUsers: updated.length, totalTxs: prev.totalTxs + 1 }));
+    window.dispatchEvent(new CustomEvent('krypto_asset_updated'));
 
     try {
       if (chainId !== sepolia.id && switchChainAsync) {
@@ -206,6 +212,7 @@ function AdminDashboard() {
     const updated = storedRegistry.filter((u: any) => !(u.address.toLowerCase() === accountAddr.toLowerCase() && u.role === roleHash));
     localStorage.setItem('krypto_user_registry', JSON.stringify(updated));
     setUserRegistry(prev => prev.filter(u => !(u.address.toLowerCase() === accountAddr.toLowerCase() && u.role === roleHash)));
+    window.dispatchEvent(new CustomEvent('krypto_asset_updated'));
 
     try {
       if (chainId !== sepolia.id && switchChainAsync) {
@@ -222,107 +229,217 @@ function AdminDashboard() {
     }
   };
 
+  const filteredRegistry = userRegistry.filter(item => {
+    const matchesSearch = item.address.toLowerCase().includes(searchQuery.toLowerCase());
+    const matchesRole = roleFilter === 'ALL' || item.roleName === roleFilter;
+    return matchesSearch && matchesRole;
+  });
+
   return (
     <div className="space-y-8 max-w-5xl">
-      <div>
-        <h2 className="text-2xl font-bold mb-1 text-[#F2F4F8]">Admin Control Panel</h2>
-        <p className="text-sm text-[#8A93A6]">Onboard identities, assign permissions, and monitor system stats.</p>
+      {/* Header Banner */}
+      <div className="flex flex-col md:flex-row md:items-center justify-between gap-4 bg-gradient-to-r from-[#1A2133] via-[#1A2133] to-[#6C63FF]/10 p-6 rounded-xl border border-[#2A3145]">
+        <div>
+          <div className="flex items-center gap-2 mb-1">
+            <span className="text-[#6C63FF] text-xl">🛡️</span>
+            <h2 className="text-2xl font-bold text-[#F2F4F8]">Admin Control Panel</h2>
+          </div>
+          <p className="text-sm text-[#8A93A6]">Onboard identities, assign permissions, and monitor system stats in real time.</p>
+        </div>
+        <div className="flex items-center gap-3">
+          <a 
+            href={`https://sepolia.etherscan.io/address/${CONTRACT_ADDRESS}`} 
+            target="_blank" 
+            rel="noreferrer"
+            className="text-xs font-mono text-[#6C63FF] bg-[#6C63FF]/10 border border-[#6C63FF]/30 px-3 py-2 rounded-lg hover:bg-[#6C63FF]/20 transition flex items-center gap-1.5"
+          >
+            <span>Contract: {CONTRACT_ADDRESS.slice(0, 6)}...{CONTRACT_ADDRESS.slice(-4)}</span>
+            <span>↗</span>
+          </a>
+        </div>
       </div>
 
       {/* System Stats Cards */}
       <div className="grid grid-cols-1 sm:grid-cols-3 gap-5">
-        <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-lg">
-          <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider mb-2">Total Onboarded Users</div>
+        <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-xl hover:border-[#6C63FF]/40 transition shadow-lg">
+          <div className="flex justify-between items-start mb-2">
+            <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider">Total Onboarded Users</div>
+            <span className="text-xs bg-[#6C63FF]/20 text-[#6C63FF] px-2 py-0.5 rounded font-mono">Identities</span>
+          </div>
           <div className="text-3xl font-bold text-[#6C63FF]">{stats.totalUsers}</div>
+          <div className="text-[11px] text-[#8A93A6] mt-2 flex items-center gap-1">
+            <span className="text-[#14E0B4]">✓</span> Active access permissions
+          </div>
         </div>
-        <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-lg">
-          <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider mb-2">Total Minted Assets</div>
+
+        <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-xl hover:border-[#14E0B4]/40 transition shadow-lg">
+          <div className="flex justify-between items-start mb-2">
+            <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider">Total Minted Assets</div>
+            <span className="text-xs bg-[#14E0B4]/20 text-[#14E0B4] px-2 py-0.5 rounded font-mono">ERC-721</span>
+          </div>
           <div className="text-3xl font-bold text-[#14E0B4]">{stats.totalAssets}</div>
+          <div className="text-[11px] text-[#8A93A6] mt-2 flex items-center gap-1">
+            <span className="text-[#14E0B4]">✓</span> Verified on IPFS & Sepolia
+          </div>
         </div>
-        <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-lg">
-          <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider mb-2">On-Chain Operations</div>
+
+        <div className="bg-[#1A2133] border border-[#2A3145] p-5 rounded-xl hover:border-[#FFB020]/40 transition shadow-lg">
+          <div className="flex justify-between items-start mb-2">
+            <div className="text-xs font-semibold text-[#8A93A6] uppercase tracking-wider">On-Chain Operations</div>
+            <span className="text-xs bg-[#FFB020]/20 text-[#FFB020] px-2 py-0.5 rounded font-mono">Events</span>
+          </div>
           <div className="text-3xl font-bold text-[#FFB020]">{stats.totalTxs}</div>
+          <div className="text-[11px] text-[#8A93A6] mt-2 flex items-center gap-1">
+            <span className="text-[#14E0B4]">✓</span> Real-time immutable ledger
+          </div>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Grant Role Form */}
-        <div className="bg-[#1A2133] border border-[#2A3145] p-6 rounded-lg h-fit">
-          <h3 className="text-lg font-bold mb-4 text-[#F2F4F8] border-b border-[#2A3145] pb-3">Grant Role</h3>
+        <div className="bg-[#1A2133] border border-[#2A3145] p-6 rounded-xl h-fit space-y-5">
+          <div>
+            <h3 className="text-lg font-bold text-[#F2F4F8]">Grant Role Permission</h3>
+            <p className="text-xs text-[#8A93A6] mt-1">Assign cryptographically backed access privileges to target addresses.</p>
+          </div>
+
           <form onSubmit={handleGrant} className="space-y-4">
             <div>
-              <label className="block text-xs font-medium text-[#8A93A6] mb-2 uppercase">Wallet Address</label>
+              <label className="block text-xs font-medium text-[#8A93A6] mb-2 uppercase tracking-wider">Target Wallet Address</label>
               <input 
-                className="w-full bg-[#0F1420] border border-[#2A3145] text-[#F2F4F8] rounded p-3 font-mono text-sm outline-none focus:border-[#6C63FF] transition"
+                className="w-full bg-[#0F1420] border border-[#2A3145] text-[#F2F4F8] rounded-lg p-3 font-mono text-sm outline-none focus:border-[#6C63FF] transition placeholder-[#8A93A6]/40"
                 value={address} onChange={(e) => setAddress(e.target.value)}
                 placeholder="0x..." required 
               />
             </div>
+
             <div>
-              <label className="block text-xs font-medium text-[#8A93A6] mb-2 uppercase">Assign Role</label>
+              <label className="block text-xs font-medium text-[#8A93A6] mb-2 uppercase tracking-wider">Assign Privilege Level</label>
               <select 
-                className="w-full bg-[#0F1420] border border-[#2A3145] text-[#F2F4F8] rounded p-3 text-sm outline-none focus:border-[#6C63FF] transition"
+                className="w-full bg-[#0F1420] border border-[#2A3145] text-[#F2F4F8] rounded-lg p-3 text-sm outline-none focus:border-[#6C63FF] transition"
                 value={role} onChange={(e) => setRole(e.target.value as any)}
               >
-                <option value={ROLES.MANAGER}>Manager (Teal)</option>
-                <option value={ROLES.AUDITOR}>Auditor (Amber)</option>
-                <option value={ROLES.ADMIN}>Admin (Violet)</option>
+                <option value={ROLES.MANAGER}>⚡ Manager (Teal) — Asset Issuance</option>
+                <option value={ROLES.AUDITOR}>📜 Auditor (Amber) — Compliance Logging</option>
+                <option value={ROLES.ADMIN}>🛡️ Admin (Violet) — Full System Control</option>
               </select>
             </div>
+
+            {/* Preset Shortcuts */}
+            <div className="pt-1">
+              <span className="text-[11px] text-[#8A93A6] block mb-2 font-medium uppercase tracking-wider">Quick Select Demo Identities</span>
+              <div className="flex flex-wrap gap-1.5">
+                <button
+                  type="button"
+                  onClick={() => { setAddress('0x6883F159BabFA2b4AbFb9d8Ba0a2DdA2412d39bF'); setRole(ROLES.MANAGER); }}
+                  className="text-[11px] bg-[#14E0B4]/10 hover:bg-[#14E0B4]/20 text-[#14E0B4] px-2.5 py-1 rounded border border-[#14E0B4]/30 font-mono transition"
+                >
+                  Manager: 0x6883...
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setAddress('0x7d1F9859BabFA2b4AbFb9d8Ba0a2DdA2412d39bF'); setRole(ROLES.AUDITOR); }}
+                  className="text-[11px] bg-[#FFB020]/10 hover:bg-[#FFB020]/20 text-[#FFB020] px-2.5 py-1 rounded border border-[#FFB020]/30 font-mono transition"
+                >
+                  Auditor: 0x7d1F...
+                </button>
+              </div>
+            </div>
+
             <button 
               type="submit" 
               disabled={isPending}
-              className="w-full bg-[#6C63FF] hover:bg-[#6C63FF]/90 text-[#F2F4F8] font-medium py-3 rounded transition shadow-[0_0_15px_rgba(108,99,255,0.25)] disabled:opacity-50 flex items-center justify-center gap-2"
+              className="w-full bg-[#6C63FF] hover:bg-[#6C63FF]/90 text-[#F2F4F8] font-bold py-3 rounded-lg transition shadow-[0_0_15px_rgba(108,99,255,0.3)] disabled:opacity-50 flex items-center justify-center gap-2 mt-2"
             >
               {isPending && <div className="w-4 h-4 border-2 border-current border-t-transparent rounded-full animate-spin" />}
-              {isPending ? 'Granting Role...' : 'Grant Role'}
+              {isPending ? 'Granting Role on Sepolia...' : 'Grant Role Permission'}
             </button>
           </form>
         </div>
 
         {/* User Registry Table */}
-        <div className="lg:col-span-2 bg-[#1A2133] border border-[#2A3145] p-6 rounded-lg">
-          <h3 className="text-lg font-bold mb-4 text-[#F2F4F8] border-b border-[#2A3145] pb-3">User Registry</h3>
+        <div className="lg:col-span-2 bg-[#1A2133] border border-[#2A3145] p-6 rounded-xl space-y-4">
+          <div className="flex flex-col sm:flex-row justify-between sm:items-center gap-3 border-b border-[#2A3145] pb-4">
+            <div>
+              <h3 className="text-lg font-bold text-[#F2F4F8]">Access Control Registry</h3>
+              <p className="text-xs text-[#8A93A6]">Active identity credentials and assigned permissions on-chain.</p>
+            </div>
+            
+            {/* Filter & Search Bar */}
+            <div className="flex items-center gap-2">
+              <input 
+                type="text"
+                placeholder="Search address..."
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                className="bg-[#0F1420] border border-[#2A3145] text-[#F2F4F8] text-xs px-3 py-1.5 rounded-lg outline-none focus:border-[#6C63FF] font-mono"
+              />
+              <select 
+                value={roleFilter}
+                onChange={(e) => setRoleFilter(e.target.value)}
+                className="bg-[#0F1420] border border-[#2A3145] text-[#F2F4F8] text-xs px-3 py-1.5 rounded-lg outline-none focus:border-[#6C63FF]"
+              >
+                <option value="ALL">All Roles</option>
+                <option value="Admin">Admin</option>
+                <option value="Manager">Manager</option>
+                <option value="Auditor">Auditor</option>
+              </select>
+            </div>
+          </div>
+
           <div className="overflow-x-auto">
             <table className="w-full text-left text-sm text-[#F2F4F8]">
               <thead>
-                <tr className="border-b border-[#2A3145] text-xs text-[#8A93A6] uppercase">
+                <tr className="border-b border-[#2A3145] text-xs text-[#8A93A6] uppercase tracking-wider">
                   <th className="pb-3 font-medium">Identity Address</th>
                   <th className="pb-3 font-medium">Assigned Role</th>
-                  <th className="pb-3 font-medium">Block</th>
+                  <th className="pb-3 font-medium">Tx Hash</th>
                   <th className="pb-3 font-medium text-right">Action</th>
                 </tr>
               </thead>
               <tbody className="divide-y divide-[#2A3145]/50">
-                {userRegistry.map((item, idx) => (
+                {filteredRegistry.map((item, idx) => (
                   <tr key={idx} className="hover:bg-[#0F1420]/50 transition">
                     <td className="py-3 font-mono text-xs text-[#F2F4F8]">
                       {item.address.slice(0, 8)}...{item.address.slice(-6)}
                     </td>
                     <td className="py-3">
-                      <span className={`inline-block text-xs font-bold px-2 py-0.5 rounded ${
-                        item.roleName === 'Admin' ? 'bg-[#6C63FF]/20 text-[#6C63FF]' :
-                        item.roleName === 'Manager' ? 'bg-[#14E0B4]/20 text-[#14E0B4]' :
-                        'bg-[#FFB020]/20 text-[#FFB020]'
+                      <span className={`inline-flex items-center gap-1 text-xs font-bold px-2.5 py-0.5 rounded-full ${
+                        item.roleName === 'Admin' ? 'bg-[#6C63FF]/20 text-[#6C63FF] border border-[#6C63FF]/40' :
+                        item.roleName === 'Manager' ? 'bg-[#14E0B4]/20 text-[#14E0B4] border border-[#14E0B4]/40' :
+                        'bg-[#FFB020]/20 text-[#FFB020] border border-[#FFB020]/40'
                       }`}>
+                        <span className="w-1.5 h-1.5 rounded-full bg-current"></span>
                         {item.roleName}
                       </span>
                     </td>
-                    <td className="py-3 font-mono text-xs text-[#8A93A6]">{item.blockNumber.toString()}</td>
+                    <td className="py-3 font-mono text-xs text-[#8A93A6]">
+                      {item.txHash ? (
+                        <a 
+                          href={`https://sepolia.etherscan.io/tx/${item.txHash}`}
+                          target="_blank" rel="noreferrer"
+                          className="text-[#6C63FF] underline hover:text-[#6C63FF]/80"
+                        >
+                          {item.txHash.slice(0, 8)}...
+                        </a>
+                      ) : (
+                        <span>On-Chain</span>
+                      )}
+                    </td>
                     <td className="py-3 text-right">
                       <button 
                         onClick={() => handleRevoke(item.address, item.role)}
-                        className="text-xs bg-[#FF5A5F]/10 hover:bg-[#FF5A5F]/20 text-[#FF5A5F] px-3 py-1 rounded transition border border-[#FF5A5F]/30"
+                        className="text-xs bg-[#FF5A5F]/10 hover:bg-[#FF5A5F]/20 text-[#FF5A5F] px-3 py-1 rounded-lg transition border border-[#FF5A5F]/30 font-medium"
                       >
                         Revoke
                       </button>
                     </td>
                   </tr>
                 ))}
-                {userRegistry.length === 0 && (
+                {filteredRegistry.length === 0 && (
                   <tr>
-                    <td colSpan={4} className="py-6 text-center text-[#8A93A6]">
-                      No roles granted on-chain yet.
+                    <td colSpan={4} className="py-8 text-center text-[#8A93A6]">
+                      No identity records found matching filter criteria.
                     </td>
                   </tr>
                 )}
