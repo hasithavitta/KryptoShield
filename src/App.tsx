@@ -901,8 +901,8 @@ export default function App() {
       <aside className="w-64 border-r border-[#2A3145] bg-[#1A2133] p-6 flex flex-col justify-between">
         <div>
           <div className="flex items-center gap-3 mb-8">
-            <div className="w-8 h-8 rounded bg-gradient-to-tr from-[#6C63FF] to-[#14E0B4] flex items-center justify-center font-bold text-lg text-white">N</div>
-            <h1 className="text-lg font-bold tracking-wide text-[#F2F4F8]">Nexus Protocol</h1>
+            <div className="w-8 h-8 rounded bg-gradient-to-tr from-[#6C63FF] to-[#14E0B4] flex items-center justify-center font-bold text-lg text-white">K</div>
+            <h1 className="text-lg font-bold tracking-wide text-[#F2F4F8]">KryptoShield</h1>
           </div>
 
           <nav className="space-y-3">
