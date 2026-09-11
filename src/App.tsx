@@ -730,10 +730,10 @@ function AuditorDashboard() {
             blockNumber: l.blockNumber,
             txHash: l.transactionHash
           })),
-          ...mintLogs.filter(l => Number(l.args.tokenId?.toString() || 0) <= 3).map(l => ({
+          ...mintLogs.map(l => ({
             type: 'AssetMinted',
             tokenId: l.args.tokenId?.toString(),
-            recipient: l.args.tokenId?.toString() === '1' ? '0x6883F159BabFA2b4AbFb9d8Ba0a2DdA2412d39bF' : '0xB9B4a83d0B3fB8e3519D91f30B541dec230482e8',
+            recipient: l.args.recipient || (l.args.tokenId?.toString() === '1' ? '0x6883F159BabFA2b4AbFb9d8Ba0a2DdA2412d39bF' : '0xB9B4a83d0B3fB8e3519D91f30B541dec230482e8'),
             cid: l.args.tokenURI?.replace('ipfs://', ''),
             blockNumber: l.blockNumber,
             txHash: l.transactionHash
